@@ -5,7 +5,7 @@ PKG_CONFIG = pkg-config
 
 INCS = -I{X11INC} \
 	   `$(PKG_CONFIG) --cflags freetype2`
-LIBS = -L${X11LIB} -lX11 -lXft -lm -lSDL2 -lSDL2_ttf \
+LIBS = -L${X11LIB} -lX11 -lXft -lm \
 	   `$(PKG_CONFIG) --libs freetype2`
 
 CFLAGS = -std=c99 -pedantic -Wall -Wno-deprecated-declarations -Os ${INCS} -D_XOPEN_SOURCE=600
