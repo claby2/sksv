@@ -1,18 +1,19 @@
-#include <SDL2/SDL.h>
-#include <SDL2/SDL_ttf.h>
 #include <X11/X.h>
 #include <X11/XKBlib.h>
+#include <X11/Xft/Xft.h>
 #include <X11/Xutil.h>
 #include <math.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #define EXIT_FAILURE 1
 #define EXIT_SUCCESS 0
 
 // TODO: Set default screen dimensions to reasonable values.
-#define SCREEN_WIDTH 640
-#define SCREEN_HEIGHT 480
+#define WINDOW_WIDTH 640
+#define WINDOW_HEIGHT 480
 
 struct Key {
   char *name;
@@ -20,13 +21,22 @@ struct Key {
   struct Key *next;
 };
 
-static Display *dpy;
+typedef struct {
+  Display *dpy;
+  Drawable buf;
+  Window win;
+  XftDraw *draw;
+  int scr;
+} XWindow;
 
-static SDL_Window *win;
-static SDL_Renderer *renderer;
-static TTF_Font *font;
-static const SDL_Color fg = {.r = 0xFF, .g = 0xFF, .b = 0xFF, .a = 0xFF};
-static const SDL_Color bg = {.r = 0x00, .g = 0x00, .b = 0x00, .a = 0xFF};
+typedef struct {
+  GC gc;
+  XftColor color;
+  XftFont *font;
+} DC;
+
+static XWindow xw;
+static DC dc;
 
 static const unsigned int KEYS_RETURN_SIZE = 32;
 
@@ -39,60 +49,55 @@ void die(const char *errstr, ...) {
   exit(EXIT_FAILURE);
 }
 
-void scc(int code) {
-  if (code < 0) {
-    die("SDL ERROR: %s\n", SDL_GetError());
-  }
-}
-
-void *scp(void *ptr) {
-  if (ptr == NULL) {
-    die("SDL ERROR(ptr): %s\n", SDL_GetError());
-  }
-  return ptr;
-}
-
-void set_color(const SDL_Color color) {
-  SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
+void settitle(char *p) {
+  XTextProperty prop;
+  Xutf8TextListToTextProperty(xw.dpy, &p, 1, XUTF8StringStyle, &prop);
+  XSetWMName(xw.dpy, xw.win, &prop);
+  XFree(prop.value);
 }
 
 void setup(void) {
-  if (!(dpy = XOpenDisplay(NULL))) die("Can't open display\n");
-  scc(SDL_Init(SDL_INIT_VIDEO));
-  scc(SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "1"));
-  scc(TTF_Init());
-  win = scp(SDL_CreateWindow("sksv", SDL_WINDOWPOS_UNDEFINED,
-                             SDL_WINDOWPOS_UNDEFINED, SCREEN_WIDTH,
-                             SCREEN_HEIGHT, SDL_WINDOW_ALWAYS_ON_TOP));
-  renderer = scp(SDL_CreateRenderer(win, -1, SDL_RENDERER_ACCELERATED));
-  // TODO: Fetch font file and ptsize from user config.
-  font = scp(TTF_OpenFont("/usr/share/fonts/TTF/FiraCode-Regular.ttf", 20));
+  Colormap cm;
+  Visual *vis;
+  XGCValues gcv;
+  XRenderColor rc;
+  XSetWindowAttributes swa;
+  XWindowAttributes attr;
+
+  if (!(xw.dpy = XOpenDisplay(NULL))) die("Can't open display\n");
+  xw.scr = XDefaultScreen(xw.dpy);
+  swa.override_redirect = True;
+  xw.win =
+      XCreateWindow(xw.dpy, XDefaultRootWindow(xw.dpy), 0, 0, WINDOW_WIDTH,
+                    WINDOW_HEIGHT, 0, CopyFromParent, CopyFromParent,
+                    CopyFromParent, CWOverrideRedirect | CWBackPixel, &swa);
+  settitle("sksv");
+  XMapRaised(xw.dpy, xw.win);
+  XGetWindowAttributes(xw.dpy, xw.win, &attr);
+  xw.buf =
+      XCreatePixmap(xw.dpy, xw.win, WINDOW_WIDTH, WINDOW_HEIGHT, attr.depth);
+
+  gcv.graphics_exposures = 0;
+  dc.gc = XCreateGC(xw.dpy, xw.win,
+                    GCForeground | GCBackground | GCGraphicsExposures, &gcv);
+  vis = XDefaultVisual(xw.dpy, xw.scr);
+  cm = XDefaultColormap(xw.dpy, xw.scr);
+  xw.draw = XftDrawCreate(xw.dpy, xw.buf, vis, cm);
+  // TODO: Source font name from config.
+  dc.font = XftFontOpenName(xw.dpy, xw.scr, "Fira Code:size=20");
+  rc.alpha = rc.red = rc.green = rc.blue = 0xFFFF;
+  XftColorAllocValue(xw.dpy, vis, cm, &rc, &dc.color);
 }
 
-int hasquit(void) {
-  SDL_Event event;
-
-  while (SDL_PollEvent(&event)) {
-    if (event.type == SDL_QUIT) {
-      return 1;
-    }
-  }
-  return 0;
-}
-
-void renderkeys(struct Key *head) {
-  SDL_Rect rect;
-  SDL_Surface *surf;
-  SDL_Texture *texture;
+char *gettext(struct Key *head) {
   char *text;
   int first = 0;
   int len = 0, total_w = 0;
-  int w, h;
   struct Key *cur;
   struct Key *prev = NULL;
 
   for (cur = head; cur != NULL; cur = cur->next) {
-    if (total_w > SCREEN_WIDTH) {
+    if (total_w > WINDOW_WIDTH) {
       if (prev) prev->next = NULL;
       free(cur);
     } else {
@@ -109,24 +114,14 @@ void renderkeys(struct Key *head) {
     } else
       strcat(text, cur->name);
   }
-  surf = scp(TTF_RenderText_Solid(font, text, fg));
-  texture = scp(SDL_CreateTextureFromSurface(renderer, surf));
-  scc(TTF_SizeText(font, text, &w, &h));
-  rect.x = 0;
-  rect.y = 0;
-  rect.w = total_w;
-  rect.h = h;
-  scc(SDL_RenderCopy(renderer, texture, &rect, &rect));
-  SDL_DestroyTexture(texture);
-  SDL_FreeSurface(surf);
-  free(text);
+  return text;
 }
 
 struct Key *keysymtokey(unsigned long keysym) {
-  struct Key *key;
-  char *str;
+  XGlyphInfo ext;
   char *name;
-  int w, h;
+  char *str;
+  struct Key *key;
 
   str = XKeysymToString(keysym);
   if (!str) return NULL;
@@ -134,9 +129,9 @@ struct Key *keysymtokey(unsigned long keysym) {
   name = malloc(strlen(str) + 1);
   strcpy(name, str);
   strcat(name, " ");
-  scc(TTF_SizeText(font, name, &w, &h));
+  XftTextExtents32(xw.dpy, dc.font, (FcChar32 *)name, strlen(name), &ext);
   key->name = name;
-  key->w = w;
+  key->w = ext.width;
   return key;
 }
 
@@ -149,33 +144,42 @@ void run(void) {
   unsigned long keysym;
 
   for (;;) {
-    if (hasquit()) break;
-    set_color(bg);
-    SDL_RenderClear(renderer);
-    XQueryKeymap(dpy, kr);
+    XQueryKeymap(xw.dpy, kr);
     for (int i = 0; i < KEYS_RETURN_SIZE; i++) {
       if (kr[i] && kr[i] != pkr[i]) {
         keycode = i * 8 + log2(abs(kr[i]) ^ pkr[i]);
         // TODO: Use appropriate values for group and level arguments.
-        keysym = XkbKeycodeToKeysym(dpy, keycode, 0, 0);
+        keysym = XkbKeycodeToKeysym(xw.dpy, keycode, 0, 0);
         cur = keysymtokey(keysym);
         if (cur) {
           cur->next = head;
           head = cur;
+          XClearWindow(xw.dpy, xw.win);
+          char *text = gettext(head);
+          XftDrawString8(xw.draw, &dc.color, dc.font, 0,
+                         dc.font->ascent + dc.font->descent, (XftChar8 *)text,
+                         strlen(text));
+          XCopyArea(xw.dpy, xw.buf, xw.win, dc.gc, 0, 0, WINDOW_WIDTH,
+                    WINDOW_HEIGHT, 0, 0);
+          XFillRectangle(xw.dpy, xw.buf, dc.gc, 0, 0, WINDOW_WIDTH,
+                         WINDOW_HEIGHT);
+          XFlush(xw.dpy);
+          free(text);
         }
       }
       pkr[i] = kr[i];
     }
-    if (head) renderkeys(head);
-    SDL_RenderPresent(renderer);
   }
 }
 
 void cleanup(void) {
-  SDL_DestroyRenderer(renderer);
-  SDL_DestroyWindow(win);
-  SDL_Quit();
-  XCloseDisplay(dpy);
+  XftDrawDestroy(xw.draw);
+  XftColorFree(xw.dpy, XDefaultVisual(xw.dpy, xw.scr),
+               DefaultColormap(xw.dpy, xw.scr), &dc.color);
+  XftFontClose(xw.dpy, dc.font);
+  XFreeGC(xw.dpy, dc.gc);
+  XDestroyWindow(xw.dpy, xw.win);
+  XCloseDisplay(xw.dpy);
   exit(EXIT_SUCCESS);
 }
 
