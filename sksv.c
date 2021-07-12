@@ -7,13 +7,17 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef XINERAMA
+#include <X11/extensions/Xinerama.h>
+#endif
 
 #define EXIT_FAILURE 1
 #define EXIT_SUCCESS 0
 
-// TODO: Set default screen dimensions to reasonable values.
-#define WINDOW_WIDTH 640
-#define WINDOW_HEIGHT 480
+#define MAX(A, B) ((A) > (B) ? (A) : (B))
+#define MIN(A, B) ((A) < (B) ? (A) : (B))
+#define INTERSECT(x, y, w, h, r) \
+  (MAX(0, MIN((x) + (w), (r).x_org + (r).width) - MAX((x), (r).x_org)))
 
 struct Key {
   char *name;
@@ -27,6 +31,8 @@ typedef struct {
   Window win;
   XftDraw *draw;
   int scr;
+  int x, y;
+  int w, h;
 } XWindow;
 
 typedef struct {
@@ -35,6 +41,7 @@ typedef struct {
   XftFont *font;
 } DC;
 
+static Window root;
 static XWindow xw;
 static DC dc;
 
@@ -56,26 +63,53 @@ void settitle(char *p) {
   XFree(prop.value);
 }
 
+void setdimensions(int *x, int *y, int *w, int *h) {
+  XWindowAttributes wa;
+#ifdef XINERAMA
+  Window dw;
+  XineramaScreenInfo *info;
+  int n, di, i;
+  int px, py;
+  unsigned int du;
+  if ((info = XineramaQueryScreens(xw.dpy, &n))) {
+    XQueryPointer(xw.dpy, root, &dw, &dw, &px, &py, &di, &di, &du);
+    for (i = 0; i < n; i++)
+      if (INTERSECT(px, py, 1, 1, info[i])) break;
+    *x = info[i].x_org;
+    *y = info[i].y_org;
+    *w = info[i].width;
+    XFree(info);
+  } else
+#endif
+  {
+    XGetWindowAttributes(xw.dpy, root, &wa);
+    *x = *y = 0;
+    *w = wa.width;
+  }
+  // TODO: Use user config height value.
+  *h = 50;
+}
+
 void setup(void) {
   Colormap cm;
   Visual *vis;
   XGCValues gcv;
   XRenderColor rc;
   XSetWindowAttributes swa;
-  XWindowAttributes attr;
+  XWindowAttributes wa;
 
   if (!(xw.dpy = XOpenDisplay(NULL))) die("Can't open display\n");
   xw.scr = XDefaultScreen(xw.dpy);
+  root = XRootWindow(xw.dpy, xw.scr);
+  setdimensions(&xw.x, &xw.y, &xw.w, &xw.h);
   swa.override_redirect = True;
-  xw.win =
-      XCreateWindow(xw.dpy, XDefaultRootWindow(xw.dpy), 0, 0, WINDOW_WIDTH,
-                    WINDOW_HEIGHT, 0, CopyFromParent, CopyFromParent,
-                    CopyFromParent, CWOverrideRedirect | CWBackPixel, &swa);
+  xw.win = XCreateWindow(xw.dpy, root, xw.x, xw.y, xw.w, xw.h, 0,
+                         CopyFromParent, CopyFromParent, CopyFromParent,
+                         CWOverrideRedirect | CWBackPixel, &swa);
   settitle("sksv");
   XMapRaised(xw.dpy, xw.win);
-  XGetWindowAttributes(xw.dpy, xw.win, &attr);
-  xw.buf =
-      XCreatePixmap(xw.dpy, xw.win, WINDOW_WIDTH, WINDOW_HEIGHT, attr.depth);
+  XGetWindowAttributes(xw.dpy, xw.win, &wa);
+  xw.buf = XCreatePixmap(xw.dpy, xw.win, xw.w, xw.h, wa.depth);
 
   gcv.graphics_exposures = 0;
   dc.gc = XCreateGC(xw.dpy, xw.win,
@@ -83,10 +117,10 @@ void setup(void) {
   vis = XDefaultVisual(xw.dpy, xw.scr);
   cm = XDefaultColormap(xw.dpy, xw.scr);
   xw.draw = XftDrawCreate(xw.dpy, xw.buf, vis, cm);
-  // TODO: Source font name from config.
   dc.font = XftFontOpenName(xw.dpy, xw.scr, "Fira Code:size=20");
   rc.alpha = rc.red = rc.green = rc.blue = 0xFFFF;
   XftColorAllocValue(xw.dpy, vis, cm, &rc, &dc.color);
+  XClearWindow(xw.dpy, xw.win);
 }
 
 char *gettext(struct Key *head) {
@@ -97,7 +131,7 @@ char *gettext(struct Key *head) {
   struct Key *prev = NULL;
 
   for (cur = head; cur != NULL; cur = cur->next) {
-    if (total_w > WINDOW_WIDTH) {
+    if (total_w > xw.w) {
       if (prev) prev->next = NULL;
       free(cur);
     } else {
@@ -159,10 +193,8 @@ void run(void) {
           XftDrawString8(xw.draw, &dc.color, dc.font, 0,
                          dc.font->ascent + dc.font->descent, (XftChar8 *)text,
                          strlen(text));
-          XCopyArea(xw.dpy, xw.buf, xw.win, dc.gc, 0, 0, WINDOW_WIDTH,
-                    WINDOW_HEIGHT, 0, 0);
-          XFillRectangle(xw.dpy, xw.buf, dc.gc, 0, 0, WINDOW_WIDTH,
-                         WINDOW_HEIGHT);
+          XCopyArea(xw.dpy, xw.buf, xw.win, dc.gc, 0, 0, xw.w, xw.h, 0, 0);
+          XFillRectangle(xw.dpy, xw.buf, dc.gc, 0, 0, xw.w, xw.h);
           XFlush(xw.dpy);
           free(text);
         }
