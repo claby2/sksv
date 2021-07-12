@@ -14,6 +14,8 @@
 #define EXIT_FAILURE 1
 #define EXIT_SUCCESS 0
 
+#define ARG(a, b) !strcmp(a, b)
+
 #define MAX(A, B) ((A) > (B) ? (A) : (B))
 #define MIN(A, B) ((A) < (B) ? (A) : (B))
 #define INTERSECT(x, y, w, h, r) \
@@ -26,13 +28,17 @@ struct Key {
 };
 
 typedef struct {
+  int x, y;
+  unsigned int w, h;
+} Geometry;
+
+typedef struct {
   Display *dpy;
   Drawable buf;
   Window win;
   XftDraw *draw;
   int scr;
-  int x, y;
-  int w, h;
+  Geometry geom;
 } XWindow;
 
 typedef struct {
@@ -45,6 +51,10 @@ static Window root;
 static XWindow xw;
 static DC dc;
 
+static char *font = "";
+static char *usergeom = NULL;
+
+static const double HEIGHT_SCALE_FACTOR = 1.5;
 static const unsigned int KEYS_RETURN_SIZE = 32;
 
 void die(const char *errstr, ...) {
@@ -63,7 +73,7 @@ void settitle(char *p) {
   XFree(prop.value);
 }
 
-void setdimensions(int *x, int *y, int *w, int *h) {
+void setwingeometry(Geometry *geom) {
   XWindowAttributes wa;
 #ifdef XINERAMA
   Window dw;
@@ -75,19 +85,18 @@ void setdimensions(int *x, int *y, int *w, int *h) {
     XQueryPointer(xw.dpy, root, &dw, &dw, &px, &py, &di, &di, &du);
     for (i = 0; i < n; i++)
       if (INTERSECT(px, py, 1, 1, info[i])) break;
-    *x = info[i].x_org;
-    *y = info[i].y_org;
-    *w = info[i].width;
+    geom->x = info[i].x_org;
+    geom->y = info[i].y_org;
+    geom->w = info[i].width;
     XFree(info);
   } else
 #endif
   {
     XGetWindowAttributes(xw.dpy, root, &wa);
-    *x = *y = 0;
-    *w = wa.width;
+    geom->x = geom->y = 0;
+    geom->w = wa.width;
   }
-  // TODO: Use user config height value.
-  *h = 50;
+  geom->h = dc.font->height * HEIGHT_SCALE_FACTOR;
 }
 
 void setup(void) {
@@ -101,15 +110,20 @@ void setup(void) {
   if (!(xw.dpy = XOpenDisplay(NULL))) die("Can't open display\n");
   xw.scr = XDefaultScreen(xw.dpy);
   root = XRootWindow(xw.dpy, xw.scr);
-  setdimensions(&xw.x, &xw.y, &xw.w, &xw.h);
+  dc.font = XftFontOpenName(xw.dpy, xw.scr, font);
+  if (usergeom)
+    XParseGeometry(usergeom, &xw.geom.x, &xw.geom.y, &xw.geom.w, &xw.geom.h);
+  else
+    setwingeometry(&xw.geom);
   swa.override_redirect = True;
-  xw.win = XCreateWindow(xw.dpy, root, xw.x, xw.y, xw.w, xw.h, 0,
-                         CopyFromParent, CopyFromParent, CopyFromParent,
-                         CWOverrideRedirect | CWBackPixel, &swa);
+  xw.win =
+      XCreateWindow(xw.dpy, root, xw.geom.x, xw.geom.y, xw.geom.w, xw.geom.h, 0,
+                    CopyFromParent, CopyFromParent, CopyFromParent,
+                    CWOverrideRedirect | CWBackPixel, &swa);
   settitle("sksv");
   XMapRaised(xw.dpy, xw.win);
   XGetWindowAttributes(xw.dpy, xw.win, &wa);
-  xw.buf = XCreatePixmap(xw.dpy, xw.win, xw.w, xw.h, wa.depth);
+  xw.buf = XCreatePixmap(xw.dpy, xw.win, xw.geom.w, xw.geom.h, wa.depth);
 
   gcv.graphics_exposures = 0;
   dc.gc = XCreateGC(xw.dpy, xw.win,
@@ -117,10 +131,8 @@ void setup(void) {
   vis = XDefaultVisual(xw.dpy, xw.scr);
   cm = XDefaultColormap(xw.dpy, xw.scr);
   xw.draw = XftDrawCreate(xw.dpy, xw.buf, vis, cm);
-  dc.font = XftFontOpenName(xw.dpy, xw.scr, "Fira Code:size=20");
   rc.alpha = rc.red = rc.green = rc.blue = 0xFFFF;
   XftColorAllocValue(xw.dpy, vis, cm, &rc, &dc.color);
-  XClearWindow(xw.dpy, xw.win);
 }
 
 char *gettext(struct Key *head) {
@@ -131,7 +143,7 @@ char *gettext(struct Key *head) {
   struct Key *prev = NULL;
 
   for (cur = head; cur != NULL; cur = cur->next) {
-    if (total_w > xw.w) {
+    if (total_w > xw.geom.w) {
       if (prev) prev->next = NULL;
       free(cur);
     } else {
@@ -163,6 +175,7 @@ struct Key *keysymtokey(unsigned long keysym) {
   name = malloc(strlen(str) + 1);
   strcpy(name, str);
   strcat(name, " ");
+  // TODO: Use a more accurate method of calculating text pixel width.
   XftTextExtents32(xw.dpy, dc.font, (FcChar32 *)name, strlen(name), &ext);
   key->name = name;
   key->w = ext.width;
@@ -190,11 +203,12 @@ void run(void) {
           head = cur;
           XClearWindow(xw.dpy, xw.win);
           char *text = gettext(head);
-          XftDrawString8(xw.draw, &dc.color, dc.font, 0,
-                         dc.font->ascent + dc.font->descent, (XftChar8 *)text,
-                         strlen(text));
-          XCopyArea(xw.dpy, xw.buf, xw.win, dc.gc, 0, 0, xw.w, xw.h, 0, 0);
-          XFillRectangle(xw.dpy, xw.buf, dc.gc, 0, 0, xw.w, xw.h);
+          XftDrawString8(xw.draw, &dc.color, dc.font, 0, dc.font->height,
+                         (XftChar8 *)text, strlen(text));
+          XCopyArea(xw.dpy, xw.buf, xw.win, dc.gc, 0, 0, xw.geom.w, xw.geom.h,
+                    0, 0);
+          XSetForeground(xw.dpy, dc.gc, XBlackPixel(xw.dpy, xw.scr));
+          XFillRectangle(xw.dpy, xw.buf, dc.gc, 0, 0, xw.geom.w, xw.geom.h);
           XFlush(xw.dpy);
           free(text);
         }
@@ -215,7 +229,22 @@ void cleanup(void) {
   exit(EXIT_SUCCESS);
 }
 
-int main(void) {
+void usage(void) {
+  fputs("usage: sksv [-fn font] [-g geometry]\n", stderr);
+  exit(EXIT_FAILURE);
+}
+
+int main(int argc, char *argv[]) {
+  int i;
+
+  for (i = 1; i < argc; i++) {
+    if (ARG(argv[i], "-fn"))
+      font = argv[++i];
+    else if (ARG(argv[i], "-g"))
+      usergeom = argv[++i];
+    else
+      usage();
+  }
   setup();
   run();
   cleanup();
