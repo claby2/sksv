@@ -7,7 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
+#include <time.h>
 #ifdef XINERAMA
 #include <X11/extensions/Xinerama.h>
 #endif
@@ -57,6 +57,7 @@ static char *usergeom = NULL;
 
 static const double HEIGHT_SCALE_FACTOR = 1.5;
 static const unsigned int KEYS_RETURN_SIZE = 32;
+static const long int DELAY = 5000000;
 
 void die(const char *errstr, ...) {
   va_list ap;
@@ -173,7 +174,8 @@ struct Key *keysymtokey(unsigned long keysym) {
   str = XKeysymToString(keysym);
   if (!str) return NULL;
   key = (struct Key *)malloc(sizeof(struct Key));
-  name = malloc(strlen(str) + 1);
+  // Malloc +2 to accommodate null terminator and additional space character.
+  name = malloc(strlen(str) + 2);
   strcpy(name, str);
   strcat(name, " ");
   XftTextExtentsUtf8(xw.dpy, dc.font, (XftChar8 *)name, strlen(name), &ext);
@@ -183,19 +185,23 @@ struct Key *keysymtokey(unsigned long keysym) {
 }
 
 void run(void) {
+  char *text;
   char kr[KEYS_RETURN_SIZE];
   char pkr[KEYS_RETURN_SIZE];
   int change;
+  int i;
   int keycode;
   struct Key *cur;
   struct Key *head = NULL;
+  struct timespec ts = {.tv_sec = 0, .tv_nsec = DELAY};
   unsigned long keysym;
 
+  memset(pkr, 0, KEYS_RETURN_SIZE * sizeof(char));
   for (;;) {
-    usleep(5000);
+    nanosleep(&ts, NULL);
     change = 0;
     XQueryKeymap(xw.dpy, kr);
-    for (int i = 0; i < KEYS_RETURN_SIZE; i++) {
+    for (i = 0; i < KEYS_RETURN_SIZE; i++) {
       if (kr[i] && kr[i] != pkr[i]) {
         keycode = i * 8 + log2(abs(kr[i]) ^ pkr[i]);
         // TODO: Use appropriate values for group and level arguments.
@@ -211,7 +217,7 @@ void run(void) {
     }
     if (change) {
       XClearWindow(xw.dpy, xw.win);
-      char *text = gettext(head);
+      text = gettext(head);
       XftDrawString8(xw.draw, &dc.color, dc.font, 0, dc.font->height,
                      (XftChar8 *)text, strlen(text));
       XCopyArea(xw.dpy, xw.buf, xw.win, dc.gc, 0, 0, xw.geom.w, xw.geom.h, 0,
@@ -222,6 +228,11 @@ void run(void) {
       free(text);
     }
   }
+  // Free linked list.
+  for (cur = head; cur != NULL; cur = cur->next) {
+    free(cur->name);
+    free(cur);
+  }
 }
 
 void cleanup(void) {
@@ -229,6 +240,7 @@ void cleanup(void) {
   XftColorFree(xw.dpy, XDefaultVisual(xw.dpy, xw.scr),
                DefaultColormap(xw.dpy, xw.scr), &dc.color);
   XftFontClose(xw.dpy, dc.font);
+  XFreePixmap(xw.dpy, xw.buf);
   XFreeGC(xw.dpy, dc.gc);
   XDestroyWindow(xw.dpy, xw.win);
   XCloseDisplay(xw.dpy);
