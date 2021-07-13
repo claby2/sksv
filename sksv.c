@@ -105,42 +105,6 @@ void setwingeometry(Geometry *geom) {
   geom->h = dc.font->height * HEIGHT_SCALE_FACTOR;
 }
 
-void setup(void) {
-  Colormap cm;
-  Visual *vis;
-  XGCValues gcv;
-  XRenderColor rc;
-  XSetWindowAttributes swa;
-  XWindowAttributes wa;
-
-  if (!(xw.dpy = XOpenDisplay(NULL))) die("Can't open display\n");
-  xw.scr = XDefaultScreen(xw.dpy);
-  root = XRootWindow(xw.dpy, xw.scr);
-  dc.font = XftFontOpenName(xw.dpy, xw.scr, font);
-  if (usergeom) /* User has specified custom geometry, use the parsed value. */
-    XParseGeometry(usergeom, &xw.geom.x, &xw.geom.y, &xw.geom.w, &xw.geom.h);
-  else
-    setwingeometry(&xw.geom);
-  swa.override_redirect = True;
-  xw.win =
-      XCreateWindow(xw.dpy, root, xw.geom.x, xw.geom.y, xw.geom.w, xw.geom.h, 0,
-                    CopyFromParent, CopyFromParent, CopyFromParent,
-                    CWOverrideRedirect | CWBackPixel, &swa);
-  settitle("sksv");
-  XMapRaised(xw.dpy, xw.win);
-  XGetWindowAttributes(xw.dpy, xw.win, &wa);
-  xw.buf = XCreatePixmap(xw.dpy, xw.win, xw.geom.w, xw.geom.h, wa.depth);
-
-  gcv.graphics_exposures = 0;
-  dc.gc = XCreateGC(xw.dpy, xw.win,
-                    GCForeground | GCBackground | GCGraphicsExposures, &gcv);
-  vis = XDefaultVisual(xw.dpy, xw.scr);
-  cm = XDefaultColormap(xw.dpy, xw.scr);
-  xw.draw = XftDrawCreate(xw.dpy, xw.buf, vis, cm);
-  rc.alpha = rc.red = rc.green = rc.blue = 0xFFFF;
-  XftColorAllocValue(xw.dpy, vis, cm, &rc, &dc.color);
-}
-
 /* Assuming s has enough space allocated, prepends t into s. */
 void prepend(char *s, const char *t) {
   size_t len = strlen(t);
@@ -180,6 +144,60 @@ char *gettext(struct Key *head) {
   return text;
 }
 
+void draw(struct Key *head) {
+  char *text;
+
+  XClearWindow(xw.dpy, xw.win);
+  if (head) {
+    text = gettext(head);
+    XftDrawString8(xw.draw, &dc.color, dc.font, 0,
+                   xw.geom.h / 2 + dc.font->descent, (XftChar8 *)text,
+                   strlen(text));
+    XCopyArea(xw.dpy, xw.buf, xw.win, dc.gc, 0, 0, xw.geom.w, xw.geom.h, 0, 0);
+    free(text);
+  }
+  XSetForeground(xw.dpy, dc.gc, XBlackPixel(xw.dpy, xw.scr));
+  XFillRectangle(xw.dpy, xw.buf, dc.gc, 0, 0, xw.geom.w, xw.geom.h);
+  XFlush(xw.dpy);
+}
+
+void setup(void) {
+  Colormap cm;
+  Visual *vis;
+  XGCValues gcv;
+  XRenderColor rc;
+  XSetWindowAttributes swa;
+  XWindowAttributes wa;
+
+  if (!(xw.dpy = XOpenDisplay(NULL))) die("Can't open display\n");
+  xw.scr = XDefaultScreen(xw.dpy);
+  root = XRootWindow(xw.dpy, xw.scr);
+  dc.font = XftFontOpenName(xw.dpy, xw.scr, font);
+  if (usergeom) /* User has specified custom geometry, use the parsed value. */
+    XParseGeometry(usergeom, &xw.geom.x, &xw.geom.y, &xw.geom.w, &xw.geom.h);
+  else
+    setwingeometry(&xw.geom);
+  swa.override_redirect = True;
+  xw.win =
+      XCreateWindow(xw.dpy, root, xw.geom.x, xw.geom.y, xw.geom.w, xw.geom.h, 0,
+                    CopyFromParent, CopyFromParent, CopyFromParent,
+                    CWOverrideRedirect | CWBackPixel, &swa);
+  settitle("sksv");
+  XMapRaised(xw.dpy, xw.win);
+  XGetWindowAttributes(xw.dpy, xw.win, &wa);
+  xw.buf = XCreatePixmap(xw.dpy, xw.win, xw.geom.w, xw.geom.h, wa.depth);
+
+  gcv.graphics_exposures = 0;
+  dc.gc = XCreateGC(xw.dpy, xw.win,
+                    GCForeground | GCBackground | GCGraphicsExposures, &gcv);
+  vis = XDefaultVisual(xw.dpy, xw.scr);
+  cm = XDefaultColormap(xw.dpy, xw.scr);
+  xw.draw = XftDrawCreate(xw.dpy, xw.buf, vis, cm);
+  rc.alpha = rc.red = rc.green = rc.blue = 0xFFFF;
+  XftColorAllocValue(xw.dpy, vis, cm, &rc, &dc.color);
+  draw(NULL);
+}
+
 /* Convert given keysym to key struct. Will return NULL if keysym is unable to
  * be converted to a string. */
 struct Key *keysymtokey(const unsigned long keysym) {
@@ -202,7 +220,6 @@ struct Key *keysymtokey(const unsigned long keysym) {
 }
 
 void run(void) {
-  char *text;
   char kr[KEYS_RETURN_SIZE];
   char pkr[KEYS_RETURN_SIZE];
   int change;
@@ -233,19 +250,7 @@ void run(void) {
       }
       pkr[i] = kr[i];
     }
-    if (change) {
-      XClearWindow(xw.dpy, xw.win);
-      text = gettext(head);
-      XftDrawString8(xw.draw, &dc.color, dc.font, 0,
-                     xw.geom.h / 2 + dc.font->descent, (XftChar8 *)text,
-                     strlen(text));
-      XCopyArea(xw.dpy, xw.buf, xw.win, dc.gc, 0, 0, xw.geom.w, xw.geom.h, 0,
-                0);
-      XSetForeground(xw.dpy, dc.gc, XBlackPixel(xw.dpy, xw.scr));
-      XFillRectangle(xw.dpy, xw.buf, dc.gc, 0, 0, xw.geom.w, xw.geom.h);
-      XFlush(xw.dpy);
-      free(text);
-    }
+    if (change) draw(head);
   }
   /* Free linked list. */
   for (cur = head; cur != NULL; cur = cur->next) {
