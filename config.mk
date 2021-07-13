@@ -1,6 +1,8 @@
 X11INC = /usr/X11R6/include
 X11LIB = /usr/X11R6/lib
 
+PREFIX = /usr/local
+
 PKG_CONFIG = pkg-config
 
 # Xinerama (optional)

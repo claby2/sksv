@@ -14,4 +14,12 @@ sksv: ${OBJ}
 clean:
 	rm -rf sksv ${OBJ}
 
+install: sksv
+	mkdir -p ${PREFIX}/bin
+	cp -f sksv ${PREFIX}/bin
+	chmod 755 ${PREFIX}/bin/sksv
+
+uninstall:
+	rm -f ${PREFIX}/bin/sksv
+
 .PHONY: all sksv clean
