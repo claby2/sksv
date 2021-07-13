@@ -157,7 +157,7 @@ char *gettext(struct Key *head) {
 
   /* Calculate length of text string. */
   for (cur = head; cur != NULL; cur = cur->next) {
-    if (total_w > xw.geom.w) {
+    if (total_w + cur->w > xw.geom.w) {
       /* Free any keys that are not expected to be rendered as they exceed the
        * window width. */
       if (prev) prev->next = NULL;
@@ -220,7 +220,7 @@ void run(void) {
     change = 0;
     XQueryKeymap(xw.dpy, kr);
     for (i = 0; i < KEYS_RETURN_SIZE; i++) {
-      if (kr[i] && kr[i] != pkr[i]) {
+      if (kr[i] && (unsigned char)kr[i] > (unsigned char)pkr[i]) {
         keycode = i * 8 + log2(abs(kr[i]) ^ pkr[i]);
         /* TODO: Use appropriate values for group and level arguments. */
         keysym = XkbKeycodeToKeysym(xw.dpy, keycode, 0, 0);
@@ -236,8 +236,9 @@ void run(void) {
     if (change) {
       XClearWindow(xw.dpy, xw.win);
       text = gettext(head);
-      XftDrawString8(xw.draw, &dc.color, dc.font, 0, dc.font->height,
-                     (XftChar8 *)text, strlen(text));
+      XftDrawString8(xw.draw, &dc.color, dc.font, 0,
+                     xw.geom.h / 2 + dc.font->descent, (XftChar8 *)text,
+                     strlen(text));
       XCopyArea(xw.dpy, xw.buf, xw.win, dc.gc, 0, 0, xw.geom.w, xw.geom.h, 0,
                 0);
       XSetForeground(xw.dpy, dc.gc, XBlackPixel(xw.dpy, xw.scr));
