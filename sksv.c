@@ -24,7 +24,7 @@
 
 struct Key {
   char *name;
-  int w;
+  int w; /* Width of key when rendered. */
   struct Key *next;
 };
 
@@ -55,7 +55,7 @@ static DC dc;
 static char *font = "";
 static char *usergeom = NULL;
 
-static const double HEIGHT_SCALE_FACTOR = 1.5;
+static const double HEIGHT_SCALE_FACTOR = 1.5; /* Adds padding to window. */
 static const unsigned int KEYS_RETURN_SIZE = 32;
 static const long int DELAY = 5000000;
 
@@ -75,6 +75,7 @@ void settitle(char *p) {
   XFree(prop.value);
 }
 
+/* Sets window geometry dynamically. Uses XINERAMA if defined. */
 void setwingeometry(Geometry *geom) {
   XWindowAttributes wa;
 #ifdef XINERAMA
@@ -85,6 +86,7 @@ void setwingeometry(Geometry *geom) {
   unsigned int du;
   if ((info = XineramaQueryScreens(xw.dpy, &n))) {
     XQueryPointer(xw.dpy, root, &dw, &dw, &px, &py, &di, &di, &du);
+    /* Find the monitor the pointer intersects with. */
     for (i = 0; i < n; i++)
       if (INTERSECT(px, py, 1, 1, info[i])) break;
     geom->x = info[i].x_org;
@@ -94,6 +96,8 @@ void setwingeometry(Geometry *geom) {
   } else
 #endif
   {
+    /* XINERAMA not defined, fallback to setting geometry based on root
+     * attributes. */
     XGetWindowAttributes(xw.dpy, root, &wa);
     geom->x = geom->y = 0;
     geom->w = wa.width;
@@ -113,7 +117,7 @@ void setup(void) {
   xw.scr = XDefaultScreen(xw.dpy);
   root = XRootWindow(xw.dpy, xw.scr);
   dc.font = XftFontOpenName(xw.dpy, xw.scr, font);
-  if (usergeom)
+  if (usergeom) /* User has specified custom geometry, use the parsed value. */
     XParseGeometry(usergeom, &xw.geom.x, &xw.geom.y, &xw.geom.w, &xw.geom.h);
   else
     setwingeometry(&xw.geom);
@@ -137,6 +141,13 @@ void setup(void) {
   XftColorAllocValue(xw.dpy, vis, cm, &rc, &dc.color);
 }
 
+/* Assuming s has enough space allocated, prepends t into s. */
+void prepend(char *s, const char *t) {
+  size_t len = strlen(t);
+  memmove(s + len, s, strlen(s) + 1);
+  memcpy(s, t, len);
+}
+
 char *gettext(struct Key *head) {
   char *text;
   int first = 0;
@@ -144,8 +155,11 @@ char *gettext(struct Key *head) {
   struct Key *cur;
   struct Key *prev = NULL;
 
+  /* Calculate length of text string. */
   for (cur = head; cur != NULL; cur = cur->next) {
     if (total_w > xw.geom.w) {
+      /* Free any keys that are not expected to be rendered as they exceed the
+       * window width. */
       if (prev) prev->next = NULL;
       free(cur);
     } else {
@@ -155,17 +169,20 @@ char *gettext(struct Key *head) {
     }
   }
   text = malloc(len + 1);
+  /* Build text to be rendered. */
   for (cur = head; cur != NULL; cur = cur->next) {
     if (first == 0) {
       strcpy(text, cur->name);
       first = 1;
     } else
-      strcat(text, cur->name);
+      prepend(text, cur->name);
   }
   return text;
 }
 
-struct Key *keysymtokey(unsigned long keysym) {
+/* Convert given keysym to key struct. Will return NULL if keysym is unable to
+ * be converted to a string. */
+struct Key *keysymtokey(const unsigned long keysym) {
   XGlyphInfo ext;
   char *name;
   char *str;
@@ -174,7 +191,7 @@ struct Key *keysymtokey(unsigned long keysym) {
   str = XKeysymToString(keysym);
   if (!str) return NULL;
   key = (struct Key *)malloc(sizeof(struct Key));
-  // Malloc +2 to accommodate null terminator and additional space character.
+  /* Malloc +2 to accommodate null terminator and additional space character. */
   name = malloc(strlen(str) + 2);
   strcpy(name, str);
   strcat(name, " ");
@@ -198,13 +215,14 @@ void run(void) {
 
   memset(pkr, 0, KEYS_RETURN_SIZE * sizeof(char));
   for (;;) {
+    /* Sleep for specified time to avoid expensive jump calls. */
     nanosleep(&ts, NULL);
     change = 0;
     XQueryKeymap(xw.dpy, kr);
     for (i = 0; i < KEYS_RETURN_SIZE; i++) {
       if (kr[i] && kr[i] != pkr[i]) {
         keycode = i * 8 + log2(abs(kr[i]) ^ pkr[i]);
-        // TODO: Use appropriate values for group and level arguments.
+        /* TODO: Use appropriate values for group and level arguments. */
         keysym = XkbKeycodeToKeysym(xw.dpy, keycode, 0, 0);
         cur = keysymtokey(keysym);
         if (cur) {
@@ -228,7 +246,7 @@ void run(void) {
       free(text);
     }
   }
-  // Free linked list.
+  /* Free linked list. */
   for (cur = head; cur != NULL; cur = cur->next) {
     free(cur->name);
     free(cur);
