@@ -219,17 +219,29 @@ struct Key *keysymtokey(const unsigned long keysym) {
   return key;
 }
 
+int isshift(unsigned long keysym) {
+  return keysym == XK_Shift_L || keysym == XK_Shift_R;
+}
+
+int iscapslock() {
+  unsigned int n;
+  XkbGetIndicatorState(xw.dpy, XkbUseCoreKbd, &n);
+  return (n & 0x01) == 1;
+}
+
 void run(void) {
   char kr[KEYS_RETURN_SIZE];
   char pkr[KEYS_RETURN_SIZE];
   int change;
   int i;
   int keycode;
+  int shift = 0;
   struct Key *cur;
   struct Key *head = NULL;
   struct timespec ts = {.tv_sec = 0, .tv_nsec = DELAY};
   unsigned long keysym;
 
+  memset(kr, 0, KEYS_RETURN_SIZE * sizeof(char));
   memset(pkr, 0, KEYS_RETURN_SIZE * sizeof(char));
   for (;;) {
     /* Sleep for specified time to avoid expensive jump calls. */
@@ -237,16 +249,20 @@ void run(void) {
     change = 0;
     XQueryKeymap(xw.dpy, kr);
     for (i = 0; i < KEYS_RETURN_SIZE; i++) {
-      if (kr[i] && (unsigned char)kr[i] > (unsigned char)pkr[i]) {
-        keycode = i * 8 + log2((unsigned char)kr[i] ^ (unsigned char)pkr[i]);
-        /* TODO: Use appropriate values for group and level arguments. */
-        keysym = XkbKeycodeToKeysym(xw.dpy, keycode, 0, 0);
+      keycode = i * 8 + log2((unsigned char)kr[i] ^ (unsigned char)pkr[i]);
+      keysym = XkbKeycodeToKeysym(xw.dpy, keycode, 0, shift || iscapslock());
+      if ((unsigned char)kr[i] > (unsigned char)pkr[i]) {
+        /* Key press. */
+        if (isshift(keysym)) shift = 1;
         cur = keysymtokey(keysym);
         if (cur) {
           cur->next = head;
           head = cur;
           change = 1;
         }
+      } else {
+        /* Key release. */
+        if (isshift(keysym)) shift = 0;
       }
       pkr[i] = kr[i];
     }
