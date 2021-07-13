@@ -175,10 +175,9 @@ struct Key *keysymtokey(unsigned long keysym) {
   name = malloc(strlen(str) + 1);
   strcpy(name, str);
   strcat(name, " ");
-  // TODO: Use a more accurate method of calculating text pixel width.
-  XftTextExtents32(xw.dpy, dc.font, (FcChar32 *)name, strlen(name), &ext);
+  XftTextExtentsUtf8(xw.dpy, dc.font, (XftChar8 *)name, strlen(name), &ext);
   key->name = name;
-  key->w = ext.width;
+  key->w = ext.xOff;
   return key;
 }
 
