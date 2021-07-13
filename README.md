@@ -3,7 +3,7 @@
 Simple Keystroke Visualizer.
 
 `sksv` is a small C program to display keystrokes. 
-Key presses and rendering are both done through X11 functions.
+Key press detection and rendering are both done through X11 functions.
 
 ## Requirements
 
