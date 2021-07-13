@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 #ifdef XINERAMA
 #include <X11/extensions/Xinerama.h>
 #endif
@@ -184,12 +185,15 @@ struct Key *keysymtokey(unsigned long keysym) {
 void run(void) {
   char kr[KEYS_RETURN_SIZE];
   char pkr[KEYS_RETURN_SIZE];
+  int change;
   int keycode;
   struct Key *cur;
   struct Key *head = NULL;
   unsigned long keysym;
 
   for (;;) {
+    usleep(5000);
+    change = 0;
     XQueryKeymap(xw.dpy, kr);
     for (int i = 0; i < KEYS_RETURN_SIZE; i++) {
       if (kr[i] && kr[i] != pkr[i]) {
@@ -200,19 +204,22 @@ void run(void) {
         if (cur) {
           cur->next = head;
           head = cur;
-          XClearWindow(xw.dpy, xw.win);
-          char *text = gettext(head);
-          XftDrawString8(xw.draw, &dc.color, dc.font, 0, dc.font->height,
-                         (XftChar8 *)text, strlen(text));
-          XCopyArea(xw.dpy, xw.buf, xw.win, dc.gc, 0, 0, xw.geom.w, xw.geom.h,
-                    0, 0);
-          XSetForeground(xw.dpy, dc.gc, XBlackPixel(xw.dpy, xw.scr));
-          XFillRectangle(xw.dpy, xw.buf, dc.gc, 0, 0, xw.geom.w, xw.geom.h);
-          XFlush(xw.dpy);
-          free(text);
+          change = 1;
         }
       }
       pkr[i] = kr[i];
+    }
+    if (change) {
+      XClearWindow(xw.dpy, xw.win);
+      char *text = gettext(head);
+      XftDrawString8(xw.draw, &dc.color, dc.font, 0, dc.font->height,
+                     (XftChar8 *)text, strlen(text));
+      XCopyArea(xw.dpy, xw.buf, xw.win, dc.gc, 0, 0, xw.geom.w, xw.geom.h, 0,
+                0);
+      XSetForeground(xw.dpy, dc.gc, XBlackPixel(xw.dpy, xw.scr));
+      XFillRectangle(xw.dpy, xw.buf, dc.gc, 0, 0, xw.geom.w, xw.geom.h);
+      XFlush(xw.dpy);
+      free(text);
     }
   }
 }
