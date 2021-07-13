@@ -238,7 +238,7 @@ void run(void) {
     XQueryKeymap(xw.dpy, kr);
     for (i = 0; i < KEYS_RETURN_SIZE; i++) {
       if (kr[i] && (unsigned char)kr[i] > (unsigned char)pkr[i]) {
-        keycode = i * 8 + log2(abs(kr[i]) ^ pkr[i]);
+        keycode = i * 8 + log2((unsigned char)kr[i] ^ (unsigned char)pkr[i]);
         /* TODO: Use appropriate values for group and level arguments. */
         keysym = XkbKeycodeToKeysym(xw.dpy, keycode, 0, 0);
         cur = keysymtokey(keysym);
